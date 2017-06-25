@@ -36,8 +36,9 @@ fn main() {
         match stream {
             Ok(mut stream) => {
                 println!("Got connection!");
-                stream.write(b"HTTP/1.x 200 OK\n\
-                        Content-Type: text/html; charset=UTF-8\n\
+                stream.write(b"HTTP/1.1 200 OK\n\
+                        Content-Type: text/html\n\
+                        Content-Length: 53\n\
                         \n\
                         <html><head></head><body><h1>Hello</h1></body></html>");
                 stream.flush();
