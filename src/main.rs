@@ -40,6 +40,7 @@ fn main() {
                         Content-Type: text/html; charset=UTF-8\n\
                         \n\
                         <html><head></head><body><h1>Hello</h1></body></html>");
+                stream.flush();
             }
             Err(e) => { panic!("Connection failed!"); }
         }
