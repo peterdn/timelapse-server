@@ -10,7 +10,7 @@ fn read_string(stream: &mut TcpStream) -> String {
     let buffer: &mut [u8; 1] = &mut [0];
     let mut ret = String::new();
     while buffer[0] != b'\n' {
-        stream.read(buffer);
+        stream.read(buffer).expect("Failed to read from stream");
         if buffer[0] != b'\r' && buffer[0] != b'\n' {
             ret.push(buffer[0] as char);
         }
@@ -25,7 +25,7 @@ fn main() {
 
     // Directory where timelapse images are stored.
     let mut dir = "";
-    let mut binding = "0.0.0.0:8060";
+    let binding = "0.0.0.0:8060";
     let mut i = 0;
     while i < args.len() {
         if args[i] == "-d" || args[i] == "--directory" {
@@ -50,9 +50,7 @@ fn main() {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
-                let mut buffer = String::new();
-                
+            Ok(mut stream) => {                
                 println!("Got request:");
 
                 let mut valid = true;
@@ -76,8 +74,10 @@ fn main() {
                 if !valid {
                     not_found(&mut stream);
                 }
+
+                stream.flush().expect("Failed to flush stream!");
             }
-            Err(e) => { panic!("Connection failed!"); }
+            Err(_) => { panic!("Connection failed!"); }
         }
     }
 }
@@ -85,21 +85,20 @@ fn main() {
 fn main_page(stream: &mut TcpStream) {
     stream.write(b"HTTP/1.1 200 OK\n\
         Content-Type: text/html\n\
+        Content-Length: 65\n\
         \n\
         <html><head></head><body>\
-          <img src='/current.jpg' />
-        </body></html>");
-    stream.flush();
+          <img src='/current.jpg' />\
+        </body></html>").expect("Failed to write to stream");
 }
 
 fn not_found(stream: &mut TcpStream) {
     stream.write(b"HTTP/1.1 404 Not Found\n\
-        \n");
-    stream.flush();
+        \n").expect("Failed to write to stream");
 }
 
 fn current_image(stream: &mut TcpStream, dir: &str) {
-    let filepath = format!("{}/current", dir);
+    let filepath = format!("{}/current.txt", dir);
     let file = File::open(filepath).expect("Unable to open file");
     let mut reader = BufReader::new(file);
     let mut image_name = String::new();
@@ -112,10 +111,11 @@ fn current_image(stream: &mut TcpStream, dir: &str) {
     let mut image: Vec<u8> = Vec::new();
     reader.read_to_end(&mut image).expect("Unable to read image");
 
+    println!("Image {}/{}.jpg is size {}", dir, image_name, image.len());
+
     write!(stream, "HTTP/1.1 200 OK\n\
         Content-Type: image/jpeg\n\
         Content-Length: {}\n\
         \n", image.len()).expect("Failed to write to stream");
-    stream.write(image.as_slice());
-    stream.flush();
+    stream.write_all(image.as_slice()).expect("Failed to write image data to stream");
 }
