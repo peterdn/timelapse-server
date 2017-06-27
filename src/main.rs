@@ -5,6 +5,7 @@ use std::io::Read;
 use std::io::Write;
 use std::net::TcpListener;
 use std::net::TcpStream;
+use std::thread;
 
 fn read_string(stream: &mut TcpStream) -> String {
     let buffer: &mut [u8; 1] = &mut [0];
@@ -16,6 +17,32 @@ fn read_string(stream: &mut TcpStream) -> String {
         }
     }
     return ret;
+}
+
+fn handle_request(mut stream: TcpStream, dir: String) {
+    let mut valid = true;
+    loop {
+        let line = read_string(&mut stream);
+        if line.len() == 0 {
+            valid = false;
+            break;
+        }
+        if line == "GET /timelapse HTTP/1.1" {
+            println!("Getting timelapse!");
+            main_page(&mut stream);
+            break;
+        } else if line == "GET /current.jpg HTTP/1.1" {
+            println!("Getting image!");
+            current_image(&mut stream, &dir);
+            break;
+        }
+    }
+
+    if !valid {
+        not_found(&mut stream);
+    }
+
+    stream.flush().expect("Failed to flush stream!");
 }
 
 fn main() {
@@ -30,7 +57,7 @@ fn main() {
     while i < args.len() {
         if args[i] == "-d" || args[i] == "--directory" {
             i += 1;
-            dir = &args[i];
+            dir = args[i].as_str();
         }
         if i >= args.len() {
             panic!("Not enough argument parameters given!");
@@ -50,32 +77,12 @@ fn main() {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {                
-                println!("Got request:");
-
-                let mut valid = true;
-                loop {
-                    let line = read_string(&mut stream);
-                    if line.len() == 0 {
-                        valid = false;
-                        break;
-                    }
-                    if line == "GET /timelapse HTTP/1.1" {
-                        println!("Getting timelapse!");
-                        main_page(&mut stream);
-                        break;
-                    } else if line == "GET /current.jpg HTTP/1.1" {
-                        println!("Getting image!");
-                        current_image(&mut stream, &dir);
-                        break;
-                    }
-                }
-
-                if !valid {
-                    not_found(&mut stream);
-                }
-
-                stream.flush().expect("Failed to flush stream!");
+            Ok(stream) => {
+                println!("Received request");
+                let dir_string = String::from(dir);
+                thread::spawn(|| {
+                    handle_request(stream, dir_string);
+                });
             }
             Err(_) => { panic!("Connection failed!"); }
         }
