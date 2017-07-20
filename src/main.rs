@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 use std::io::Write;
+use std::net::Shutdown;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::thread;
@@ -43,6 +44,7 @@ fn handle_request(mut stream: TcpStream, dir: String) {
     }
 
     stream.flush().expect("Failed to flush stream!");
+    stream.shutdown(Shutdown::Write).expect("Could not shut down!");
 }
 
 fn main() {
@@ -90,7 +92,7 @@ fn main() {
 }
 
 fn main_page(stream: &mut TcpStream) {
-    stream.write(b"HTTP/1.1 200 OK\n\
+    write!(stream, "HTTP/1.1 200 OK\n\
         Content-Type: text/html\n\
         Content-Length: 65\n\
         \n\
@@ -105,20 +107,13 @@ fn not_found(stream: &mut TcpStream) {
 }
 
 fn current_image(stream: &mut TcpStream, dir: &str) {
-    let filepath = format!("{}/current.txt", dir);
-    let file = File::open(filepath).expect("Unable to open file");
-    let mut reader = BufReader::new(file);
-    let mut image_name = String::new();
-    reader.read_to_string(&mut image_name).expect("Unable to read file");
-    image_name = image_name.to_string().trim().to_string();
-
-    let image_filepath = format!("{}/{}.jpg", dir, image_name);
+    let image_filepath = format!("{}/current.jpg", dir);
     let image_file = File::open(image_filepath).expect("Unable to open image file");
-    reader = BufReader::new(image_file);
+    let mut reader = BufReader::new(image_file);
     let mut image: Vec<u8> = Vec::new();
     reader.read_to_end(&mut image).expect("Unable to read image");
 
-    println!("Image {}/{}.jpg is size {}", dir, image_name, image.len());
+    println!("Image {}/current.jpg is size {}", dir, image.len());
 
     write!(stream, "HTTP/1.1 200 OK\n\
         Content-Type: image/jpeg\n\
