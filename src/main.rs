@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufRead, BufReader};
 use std::io::Read;
 use std::io::Write;
 use std::net::Shutdown;
@@ -8,42 +8,42 @@ use std::net::TcpListener;
 use std::net::TcpStream;
 use std::thread;
 
-fn read_string(stream: &mut TcpStream) -> String {
-    let buffer: &mut [u8; 1] = &mut [0];
-    let mut ret = String::new();
-    while buffer[0] != b'\n' {
-        stream.read(buffer).expect("Failed to read from stream");
-        if buffer[0] != b'\r' && buffer[0] != b'\n' {
-            ret.push(buffer[0] as char);
-        }
-    }
-    return ret;
-}
-
 fn handle_request(mut stream: TcpStream, dir: String) {
-    let mut valid = true;
-    loop {
-        let line = read_string(&mut stream);
-        if line.len() == 0 {
-            valid = false;
-            break;
-        }
-        if line == "GET /timelapse HTTP/1.1" {
-            println!("Getting timelapse!");
-            main_page(&mut stream);
-            break;
-        } else if line == "GET /current.jpg HTTP/1.1" {
-            println!("Getting image!");
-            current_image(&mut stream, &dir);
-            break;
+    // GET will be in first line of header.
+    let mut get_line = String::new();
+
+    {
+        let mut reader = BufReader::new(&stream);
+        reader.read_line(&mut get_line)
+                    .expect("Failed to read line from stream");
+
+        // Read rest of request. If we don't, the client will
+        // behave unexpectedly when we close the socket on
+        // shutdown. For example, curl will complain that the
+        // transfer closed with X bytes remaining to read.
+        let mut line = String::new();
+        loop {
+            reader.read_line(&mut line)
+                    .expect("Failed to read line from stream");
+            if line == "\r\n" {
+                break;
+            }
+            line.clear();
         }
     }
 
-    if !valid {
+    let get_line = get_line.trim();
+
+    if get_line == "GET /timelapse HTTP/1.1" {
+        println!("Getting timelapse!");
+        main_page(&mut stream);
+    } else if get_line == "GET /current.jpg HTTP/1.1" {
+        println!("Getting image!");
+        current_image(&mut stream, &dir);
+    } else {
         not_found(&mut stream);
     }
 
-    stream.flush().expect("Failed to flush stream!");
     stream.shutdown(Shutdown::Write).expect("Could not shut down!");
 }
 
@@ -97,7 +97,7 @@ fn main_page(stream: &mut TcpStream) {
         Content-Length: 65\n\
         \n\
         <html><head></head><body>\
-          <img src='/current.jpg' />\
+          <img width='800' src='/current.jpg' />\
         </body></html>").expect("Failed to write to stream");
 }
 
