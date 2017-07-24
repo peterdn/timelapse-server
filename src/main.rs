@@ -92,13 +92,14 @@ fn main() {
 }
 
 fn main_page(stream: &mut TcpStream) {
+    let page_body = "<html><head></head><body>\
+          <img width='800' src='/current.jpg' />\
+        </body></html>";
     write!(stream, "HTTP/1.1 200 OK\n\
         Content-Type: text/html\n\
-        Content-Length: 65\n\
+        Content-Length: {}\n\
         \n\
-        <html><head></head><body>\
-          <img width='800' src='/current.jpg' />\
-        </body></html>").expect("Failed to write to stream");
+        {}", page_body.len(), page_body).expect("Failed to write to stream");
 }
 
 fn not_found(stream: &mut TcpStream) {
