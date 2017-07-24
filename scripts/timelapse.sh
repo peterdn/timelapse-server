@@ -15,3 +15,6 @@ exiv2 -et "$IMAGE_FILE"
 
 ln -sf "$IMAGE_FILE" "$CURRENT_FRAME"
 ln -sf "$THUMB_FILE" "$CURRENT_THUMB"
+
+# Update Redis current frame key.
+redis-cli set current.jpg "$IMAGE_FILE"

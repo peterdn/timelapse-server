@@ -1,4 +1,3 @@
-use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::io::Read;
@@ -8,7 +7,10 @@ use std::net::TcpListener;
 use std::net::TcpStream;
 use std::thread;
 
-fn handle_request(mut stream: TcpStream, dir: String) {
+extern crate redis;
+use redis::Commands;
+
+fn handle_request(mut stream: TcpStream) {
     // GET will be in first line of header.
     let mut get_line = String::new();
 
@@ -39,7 +41,7 @@ fn handle_request(mut stream: TcpStream, dir: String) {
         main_page(&mut stream);
     } else if get_line == "GET /current.jpg HTTP/1.1" {
         println!("Getting image!");
-        current_image(&mut stream, &dir);
+        current_image(&mut stream);
     } else {
         not_found(&mut stream);
     }
@@ -50,28 +52,7 @@ fn handle_request(mut stream: TcpStream, dir: String) {
 fn main() {
     println!("Timelapse Server");
 
-    let args: Vec<String> = env::args().collect();
-
-    // Directory where timelapse images are stored.
-    let mut dir = "";
     let binding = "0.0.0.0:8060";
-    let mut i = 0;
-    while i < args.len() {
-        if args[i] == "-d" || args[i] == "--directory" {
-            i += 1;
-            dir = args[i].as_str();
-        }
-        if i >= args.len() {
-            panic!("Not enough argument parameters given!");
-        }
-        i += 1;
-    }
-
-    if dir == "" {
-        println!("Using current directory...");
-    } else {
-        println!("Using directory {}", dir);
-    }
 
     println!("Starting server...");
     
@@ -81,9 +62,8 @@ fn main() {
         match stream {
             Ok(stream) => {
                 println!("Received request");
-                let dir_string = String::from(dir);
                 thread::spawn(|| {
-                    handle_request(stream, dir_string);
+                    handle_request(stream);
                 });
             }
             Err(_) => { panic!("Connection failed!"); }
@@ -107,14 +87,17 @@ fn not_found(stream: &mut TcpStream) {
         \n").expect("Failed to write to stream");
 }
 
-fn current_image(stream: &mut TcpStream, dir: &str) {
-    let image_filepath = format!("{}/current.jpg", dir);
-    let image_file = File::open(image_filepath).expect("Unable to open image file");
+fn current_image(stream: &mut TcpStream) {
+    let redis_client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to redis server!");
+    let conn = redis_client.get_connection().expect("Failed to get connection!");
+    let image_filepath : String = conn.get("current.jpg").expect("Failed to get current image!");
+
+    let image_file = File::open(image_filepath.as_str()).expect("Unable to open image file");
     let mut reader = BufReader::new(image_file);
     let mut image: Vec<u8> = Vec::new();
     reader.read_to_end(&mut image).expect("Unable to read image");
 
-    println!("Image {}/current.jpg is size {}", dir, image.len());
+    println!("Image {} is size {}", image_filepath.as_str(), image.len());
 
     write!(stream, "HTTP/1.1 200 OK\n\
         Content-Type: image/jpeg\n\
