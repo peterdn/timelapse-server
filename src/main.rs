@@ -1,6 +1,4 @@
-use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::io::Read;
 use std::io::Write;
 use std::net::Shutdown;
 use std::net::TcpListener;
@@ -9,6 +7,9 @@ use std::thread;
 
 extern crate redis;
 use redis::Commands;
+
+extern crate image;
+use image::GenericImage;
 
 fn handle_request(mut stream: TcpStream) {
     // GET will be in first line of header.
@@ -73,7 +74,7 @@ fn main() {
 
 fn main_page(stream: &mut TcpStream) {
     let page_body = "<html><head></head><body>\
-          <img width='800' src='/current.jpg' />\
+          <img src='/current.jpg' />\
         </body></html>";
     write!(stream, "HTTP/1.1 200 OK\n\
         Content-Type: text/html\n\
@@ -94,25 +95,31 @@ fn current_image(stream: &mut TcpStream) {
     let image_filepath = image_filepath.as_str();
 
     // Attempt to load image from Redis. If it's not there, load and cache.
-    let mut image: Vec<u8> = conn.get::<&str, Vec<u8>>(image_filepath).expect("Failed to read from Redis!");
-    if image.len() > 0 {
+    let mut image_buffer: Vec<u8> = conn.get::<&str, Vec<u8>>(image_filepath).expect("Failed to read from Redis!");
+    if image_buffer.len() > 0 {
         println!("Found cached image in Redis...");
     } else {
         println!("Loading image from file...");
-        let image_file = File::open(image_filepath).expect("Unable to open image file");
-        let mut reader = BufReader::new(image_file);
-        image = Vec::new();
-        reader.read_to_end(&mut image).expect("Unable to read image");
+
+        let mut image = image::open(image_filepath).expect("Unable to open image file!");
+        let (width, height) = image.dimensions();
+
+        let (new_width, new_height) = (width/3, height/3);
+        println!("Resizing image from {}x{} to {}x{}...", width, height, new_width, new_height);
+        image = image.resize(new_width, new_height, image::FilterType::Triangle);
+
+        image_buffer = Vec::new();
+        image.save(&mut image_buffer, image::JPEG).expect("Failed to encode image to buffer!");
 
         // TODO: pointlessly have to clone the image here?
-        conn.set::<&str, Vec<u8>, ()>(image_filepath, image.clone()).expect("Failed to cache image in Redis!");
+        conn.set::<&str, Vec<u8>, ()>(image_filepath, image_buffer.clone()).expect("Failed to cache image in Redis!");
     }
 
-    println!("Image {} is size {}", image_filepath, image.len());
+    println!("Image {} is size {}", image_filepath, image_buffer.len());
 
     write!(stream, "HTTP/1.1 200 OK\n\
         Content-Type: image/jpeg\n\
         Content-Length: {}\n\
-        \n", image.len()).expect("Failed to write to stream");
-    stream.write_all(image.as_slice()).expect("Failed to write image data to stream");
+        \n", image_buffer.len()).expect("Failed to write to stream");
+    stream.write_all(image_buffer.as_slice()).expect("Failed to write image data to stream");
 }

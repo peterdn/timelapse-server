@@ -5,3 +5,4 @@ authors = ["peterdn"]
 
 [dependencies]
 redis = "0.8.0"
+image = "0.14.0"
