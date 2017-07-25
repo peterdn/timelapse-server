@@ -91,13 +91,24 @@ fn current_image(stream: &mut TcpStream) {
     let redis_client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to redis server!");
     let conn = redis_client.get_connection().expect("Failed to get connection!");
     let image_filepath : String = conn.get("current.jpg").expect("Failed to get current image!");
+    let image_filepath = image_filepath.as_str();
 
-    let image_file = File::open(image_filepath.as_str()).expect("Unable to open image file");
-    let mut reader = BufReader::new(image_file);
-    let mut image: Vec<u8> = Vec::new();
-    reader.read_to_end(&mut image).expect("Unable to read image");
+    // Attempt to load image from Redis. If it's not there, load and cache.
+    let mut image: Vec<u8> = conn.get::<&str, Vec<u8>>(image_filepath).expect("Failed to read from Redis!");
+    if image.len() > 0 {
+        println!("Found cached image in Redis...");
+    } else {
+        println!("Loading image from file...");
+        let image_file = File::open(image_filepath).expect("Unable to open image file");
+        let mut reader = BufReader::new(image_file);
+        image = Vec::new();
+        reader.read_to_end(&mut image).expect("Unable to read image");
 
-    println!("Image {} is size {}", image_filepath.as_str(), image.len());
+        // TODO: pointlessly have to clone the image here?
+        conn.set::<&str, Vec<u8>, ()>(image_filepath, image.clone()).expect("Failed to cache image in Redis!");
+    }
+
+    println!("Image {} is size {}", image_filepath, image.len());
 
     write!(stream, "HTTP/1.1 200 OK\n\
         Content-Type: image/jpeg\n\
