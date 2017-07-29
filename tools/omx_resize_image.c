@@ -57,7 +57,6 @@ bool process_output_chunk(COMPONENT_T *component,
       exit(EXIT_FAILURE);
     }
     memcpy(buffer_data, buff_header->pBuffer, buff_header->nFilledLen);
-    *bytes_written += buff_header->nFilledLen;
   }
 
   if (buff_header->nFlags & OMX_BUFFERFLAG_EOS) {
@@ -120,7 +119,14 @@ int main(int argc, char *argv[]) {
 
   initialise_pipeline(&decode_component);
 
-  FILE *f = fopen("/mnt/data/timelapse/current.jpg", "rb");
+  // Command-line args.
+  char *image_filepath = "/mnt/data/timelapse/current.jpg";
+  if (argc >= 2) {
+    image_filepath = argv[1];
+  }
+
+  fprintf(stderr, "Resizing image %s\n", image_filepath);
+  FILE *f = fopen(image_filepath, "rb");
   if (!f) {
     fprintf(stderr, "Can't open image file!\n");
     exit(EXIT_FAILURE);
