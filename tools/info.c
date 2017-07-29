@@ -62,6 +62,18 @@ void set_image_decoder_input_format(COMPONENT_T *component) {
   OMX_SetParameter(ilclient_get_handle(component), OMX_IndexParamImagePortFormat, &image_port_format);
 }
 
+void set_image_encoder_output_format(COMPONENT_T *component) {
+  OMX_IMAGE_PARAM_PORTFORMATTYPE image_port_format;
+  memset(&image_port_format, 0, sizeof(OMX_IMAGE_PARAM_PORTFORMATTYPE));
+  image_port_format.nSize = sizeof(OMX_IMAGE_PARAM_PORTFORMATTYPE);
+  image_port_format.nVersion.nVersion =  OMX_VERSION;
+
+  image_port_format.nPortIndex = 341;
+  image_port_format.eCompressionFormat = OMX_IMAGE_CodingJPEG;
+
+  OMX_SetParameter(ilclient_get_handle(component), OMX_IndexParamImagePortFormat, &image_port_format);
+}
+
 OMX_ERRORTYPE read_into_buffer_and_empty(FILE *f, COMPONENT_T *component,
     OMX_BUFFERHEADERTYPE *buff_header, int *toread) {
 
@@ -90,18 +102,21 @@ OMX_ERRORTYPE save_info_from_filled_buffer(COMPONENT_T *component,
 
   printf("Got a filled buffer with %d, allocated %d\n",
       buff_header->nFilledLen, buff_header->nAllocLen);
-  if (buff_header->nFlags & OMX_BUFFERFLAG_EOS) {
-    printf("Got EOS on output\n");
+
+  if (buff_header->nFilledLen > 0) {
     printf("Writing image...\n");
     
-    FILE *of = fopen("output.jpg", "wb");
+    FILE *of = fopen("output.jpg", "a+b");
     int nwritten = fwrite(buff_header->pBuffer, buff_header->nFilledLen, 1, of);
     if (nwritten != 1) {
       fprintf(stderr, "Failed to write all data to output file!\n");
       exit(EXIT_FAILURE);
     }
     fclose(of);
-    printf("Success!!!!\n");
+  }
+
+  if (buff_header->nFlags & OMX_BUFFERFLAG_EOS) {
+    printf("Got EOS on output\n");
     exit(EXIT_SUCCESS);
   }
 
@@ -189,7 +204,6 @@ int main(int argc, char *argv[]) {
 
   bcm_host_init();
 
-  char *component_name = "image_decode";
   handle = ilclient_init();
 
   if (!handle) {
@@ -227,14 +241,24 @@ int main(int argc, char *argv[]) {
   set_resize_component_params(resize_component);
 
   // Enable output port of resize component
-  ilclient_enable_port_buffers(resize_component, 61, NULL, NULL, NULL);
-  ilclient_enable_port(resize_component, 61);
+  /*ilclient_enable_port_buffers(resize_component, 61, NULL, NULL, NULL);
+  ilclient_enable_port(resize_component, 61);*/
 
   print_state(ilclient_get_handle(resize_component));
 
 
-  // Move image_decode component to executing state.
+  // Set up encode component...
+  COMPONENT_T *encode_component;
+  create_and_init_component(handle, &encode_component, "image_encode");
+  set_image_encoder_output_format(encode_component);
 
+  // Enable output port on encode component.
+  ilclient_enable_port_buffers(encode_component, 341, NULL, NULL, NULL);
+  ilclient_enable_port(encode_component, 341);
+
+
+
+  // Move image_decode component to executing state.
   int err;
   if ((err = ilclient_change_component_state(decode_component, OMX_StateExecuting)) < 0) {
     fprintf(stderr, "Failed to transition to executing state!\n");
@@ -271,30 +295,43 @@ int main(int argc, char *argv[]) {
     fseek(f, 0, SEEK_SET);
   }
 
+
   // Wait for the first input block to set params for output port.
   ilclient_wait_for_event(decode_component, OMX_EventPortSettingsChanged, 321, 0, 0, 1,
       ILCLIENT_EVENT_ERROR | ILCLIENT_PARAMETER_CHANGED, 10000);
 
   get_output_port_settings(decode_component);
 
-
-  // Set up the tunnel between the ports of components A and B.
-  TUNNEL_T tunnel;
-  set_tunnel(&tunnel, decode_component, 321, resize_component, 60);
-  if ((err = ilclient_setup_tunnel(&tunnel, 0, 0)) < 0) {
-    fprintf(stderr, "Failed to setup tunnel\n");
+  // Set up the tunnel between the ports of image_decode and resize components.
+  TUNNEL_T decode_resize_tunnel;
+  set_tunnel(&decode_resize_tunnel, decode_component, 321, resize_component, 60);
+  if ((err = ilclient_setup_tunnel(&decode_resize_tunnel, 0, 0)) < 0) {
+    fprintf(stderr, "Failed to setup decode_resize_tunnel\n");
     exit(EXIT_FAILURE);
   } else {
-    printf("Tunnel has been set up!\n");
+    printf("decode_resize_tunnel has been set up!\n");
+  }
+
+  TUNNEL_T resize_encode_tunnel;
+  set_tunnel(&resize_encode_tunnel, resize_component, 61, encode_component, 340);
+  if ((err = ilclient_setup_tunnel(&resize_encode_tunnel, 0, 0)) < 0) {
+    fprintf(stderr, "Failed to setup resize_encode_tunnel\n");
+    exit(EXIT_FAILURE);
+  } else {
+    printf("resize_encode_tunnel has been set up!\n");
   }
 
   // Enable decode output ports
   ilclient_enable_port(decode_component, 321);
-
   print_state(ilclient_get_handle(decode_component));
 
-  // Enable resize component input ports
+  // Enable resize component input and output ports
   ilclient_enable_port(resize_component, 60);
+  ilclient_enable_port(resize_component, 61);
+
+  // Enable encode component input port
+  ilclient_enable_port(encode_component, 340);
+
 
   print_state(ilclient_get_handle(resize_component));
 
@@ -313,26 +350,35 @@ int main(int argc, char *argv[]) {
   }
   print_state(ilclient_get_handle(resize_component));
 
+  printf("Setting image_encode to executing...\n");
+  if ((err = ilclient_change_component_state(encode_component, OMX_StateExecuting)) < 0) {
+    fprintf(stderr, "Couldn't set resize to executing: 0x%X\n", err);
+    exit(EXIT_FAILURE);
+  }
+  print_state(ilclient_get_handle(encode_component));
 
-  // Write data to image_decode and read from resize...
 
+  // Clear output file.
+  fclose(fopen("output.jpg", "wb"));
+
+  // Write data to image_decode and read from image_decode...
   while (toread > 0) {
     buff_header = ilclient_get_input_buffer(decode_component, 320, 1);
     if (buff_header != NULL) {
       read_into_buffer_and_empty(f, decode_component, buff_header, &toread);
     }
 
-    buff_header = ilclient_get_output_buffer(resize_component, 61, 0);
+    buff_header = ilclient_get_output_buffer(encode_component, 341, 0);
     if (buff_header != NULL) {
-      save_info_from_filled_buffer(resize_component, buff_header);
+      save_info_from_filled_buffer(encode_component, buff_header);
     }
   }
 
   while (1) {
     printf("Getting the last output buffers...\n");
-    buff_header = ilclient_get_output_buffer(resize_component, 61, 1);
+    buff_header = ilclient_get_output_buffer(encode_component, 341, 1);
     if (buff_header != NULL) {
-      save_info_from_filled_buffer(resize_component, buff_header);
+      save_info_from_filled_buffer(encode_component, buff_header);
     } else {
       break;
     }
