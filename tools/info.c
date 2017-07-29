@@ -1,11 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include <OMX_Core.h>
 
 #include <bcm_host.h>
 
 #include "component.h"
+
+// 5MB output buffer.
+#define OUTPUT_BUFFER_SIZE (1024*1024*5)
 
 
 void error_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data) {
@@ -23,11 +27,11 @@ OMX_ERRORTYPE read_into_buffer_and_empty(FILE *f, COMPONENT_T *component,
   int nread = fread(buff_header->pBuffer, 1, buff_size, f);
   *bytes_to_read -= nread;
 
-  printf("Read %d bytes\n", nread);
+  fprintf(stderr, "Read %d bytes\n", nread);
 
   buff_header->nFilledLen = nread;
   if (*bytes_to_read <= 0) {
-    printf("Setting EOS on input\n");
+    fprintf(stderr, "Setting EOS on input\n");
     buff_header->nFlags |= OMX_BUFFERFLAG_EOS;
   }
 
@@ -39,35 +43,35 @@ OMX_ERRORTYPE read_into_buffer_and_empty(FILE *f, COMPONENT_T *component,
   return err;
 }
 
-OMX_ERRORTYPE save_info_from_filled_buffer(COMPONENT_T *component,
-    OMX_BUFFERHEADERTYPE *buff_header) {
+bool process_output_chunk(COMPONENT_T *component,
+    OMX_BUFFERHEADERTYPE *buff_header, unsigned char *out_buffer, int *bytes_written) {
 
-  printf("Got a filled buffer with %d, allocated %d\n",
+  fprintf(stderr, "Got a filled buffer with %d, allocated %d\n",
       buff_header->nFilledLen, buff_header->nAllocLen);
 
   if (buff_header->nFilledLen > 0) {
-    printf("Writing image...\n");
-    
-    FILE *of = fopen("output.jpg", "a+b");
-    int nwritten = fwrite(buff_header->pBuffer, buff_header->nFilledLen, 1, of);
-    if (nwritten != 1) {
-      fprintf(stderr, "Failed to write all data to output file!\n");
+    void *buffer_data = out_buffer + *bytes_written;
+    *bytes_written += buff_header->nFilledLen;
+    if (*bytes_written > OUTPUT_BUFFER_SIZE) {
+      fprintf(stderr, "Output buffer not large enough!\n");
       exit(EXIT_FAILURE);
     }
-    fclose(of);
+    memcpy(buffer_data, buff_header->pBuffer, buff_header->nFilledLen);
+    *bytes_written += buff_header->nFilledLen;
   }
 
   if (buff_header->nFlags & OMX_BUFFERFLAG_EOS) {
-    printf("Got EOS on output\n");
-    exit(EXIT_SUCCESS);
+    fprintf(stderr, "Got EOS on output\n");
+    return true;
   }
 
   OMX_ERRORTYPE err = OMX_FillThisBuffer(ilclient_get_handle(component), buff_header);
   if (err != OMX_ErrorNone) {
     fprintf(stderr, "Fill buffer error 0x%X\n", (unsigned int)err);
+    exit(EXIT_FAILURE);
   }
 
-  return err;
+  return false;
 }
 
 
@@ -132,9 +136,14 @@ int main(int argc, char *argv[]) {
   start_pipeline(&decode_component);
 
 
-  // Clear output file.
-  fclose(fopen("output.jpg", "wb"));
-
+  // Allocate output buffer.
+  // TODO: realloc if too small...
+  unsigned char *out_buffer = calloc(5 * 1024 * 1024, 1);
+  if (!out_buffer) {
+    fprintf(stderr, "Failed to allocate output buffer!\n");
+    exit(EXIT_FAILURE);
+  }
+  int bytes_written = 0;
 
   // Write data to image_decode and read from image_decode...
   OMX_BUFFERHEADERTYPE *buff_header;
@@ -146,22 +155,35 @@ int main(int argc, char *argv[]) {
 
     buff_header = ilclient_get_output_buffer(encode_component.component, 341, 0);
     if (buff_header != NULL) {
-      save_info_from_filled_buffer(encode_component.component, buff_header);
+      process_output_chunk(encode_component.component, buff_header, out_buffer, &bytes_written);
     }
   }
 
   while (1) {
-    printf("Getting the last output buffers...\n");
+    fprintf(stderr, "Getting the last output buffers...\n");
     buff_header = ilclient_get_output_buffer(encode_component.component, 341, 1);
     if (buff_header != NULL) {
-      save_info_from_filled_buffer(encode_component.component, buff_header);
+      if (process_output_chunk(encode_component.component, buff_header, out_buffer, &bytes_written)) {
+        break;
+      }
     } else {
       break;
     }
   }
 
+  fprintf(stderr, "Closing file...\n");
   fclose(f);
-  printf("Closing file...\n");
+
+  // *******************************************
+  // ********** Process output buffer **********
+  // *******************************************
+
+  fprintf(stderr, "%d\n", bytes_written);
+
+  // Write this frame to stdout.
+  fwrite(out_buffer, bytes_written, 1, stdout);
+  fflush(stdout);
+
 
   exit(EXIT_SUCCESS);
 }
