@@ -141,7 +141,6 @@ void get_output_port_settings(COMPONENT_T *component) {
 }
 
 void set_resize_component_params(COMPONENT_T *component) {
-  
   OMX_PARAM_PORTDEFINITIONTYPE portdef;
   memset(&portdef, 0, sizeof(OMX_PARAM_PORTDEFINITIONTYPE));
   portdef.nSize = sizeof(OMX_PARAM_PORTDEFINITIONTYPE);
@@ -160,30 +159,33 @@ void set_resize_component_params(COMPONENT_T *component) {
     fprintf(stderr, "Error setting resize parameters: 0x%X\n", err);
     exit(EXIT_FAILURE);
   }
-  
-  /*OMX_PARAM_RESIZETYPE resize_param;
-  memset(&resize_param, 0, sizeof(OMX_PARAM_RESIZETYPE));
-  resize_param.nSize = sizeof(OMX_PARAM_RESIZETYPE);
-  resize_param.nVersion.nVersion = OMX_VERSION;
-  resize_param.nPortIndex = 61;
-  resize_param.nMaxWidth = 1080;
-  resize_param.nMaxHeight = 1080;
-  resize_param.eMode = OMX_RESIZE_BOX;
-  resize_param.bPreserveAspectRatio = 1;
+}
 
-  OMX_ERRORTYPE err;
-  if ((err = OMX_SetParameter(ilclient_get_handle(component),
-      OMX_IndexParamResize, &resize_param)) != OMX_ErrorNone) {
-    fprintf(stderr, "Error setting resize parameters: 0x%X\n", err);
+void create_and_init_component(ILCLIENT_T *handle,
+    COMPONENT_T **component, char *component_name) {
+  int err = ilclient_create_component(handle, component, component_name,
+      ILCLIENT_DISABLE_ALL_PORTS | ILCLIENT_ENABLE_INPUT_BUFFERS | ILCLIENT_ENABLE_OUTPUT_BUFFERS);
+
+  if (err < 0) {
+    fprintf(stderr, "Failed to initialise component %s, error code 0x%X\n",
+        component_name, err);
     exit(EXIT_FAILURE);
-  } else {
-    printf("Set resize params\n");
-  }*/
+  }
+
+  print_state(ilclient_get_handle(*component));
+
+  // Move component to idle state.
+  if ((err = ilclient_change_component_state(*component, OMX_StateIdle)) < 0) {
+    fprintf(stderr, "Failed to change component state to idle!\n");
+    exit(EXIT_FAILURE);
+  }
+
+  print_state(ilclient_get_handle(*component));
 }
 
 int main(int argc, char *argv[]) {
   ILCLIENT_T *handle = 0;
-  COMPONENT_T *component;
+  COMPONENT_T *decode_component;
 
   bcm_host_init();
 
@@ -206,52 +208,20 @@ int main(int argc, char *argv[]) {
   ilclient_set_eos_callback(handle, eos_callback, NULL);
 
   // Create image_decode component in loaded state with all ports disabled.
+  create_and_init_component(handle, &decode_component, "image_decode");
 
-  int err = ilclient_create_component(handle, &component, component_name,
-      ILCLIENT_DISABLE_ALL_PORTS | ILCLIENT_ENABLE_INPUT_BUFFERS | ILCLIENT_ENABLE_OUTPUT_BUFFERS);
-
-  if (err < 0) {
-    fprintf(stderr, "Failed to initialise component %d\n", err);
-    exit(EXIT_FAILURE);
-  }
-
-  print_state(ilclient_get_handle(component));
-
-  // Move the image_decode component to idle state.
-
-  if ((err = ilclient_change_component_state(component, OMX_StateIdle)) < 0) {
-    fprintf(stderr, "Failed to change component state to idle!\n");
-    exit(EXIT_FAILURE);
-  }
-
-  set_image_decoder_input_format(component);
+  set_image_decoder_input_format(decode_component);
 
   // Create input port buffer and enable port.
-  ilclient_enable_port_buffers(component, 320, NULL, NULL, NULL);
-  ilclient_enable_port(component, 320);
+  ilclient_enable_port_buffers(decode_component, 320, NULL, NULL, NULL);
+  ilclient_enable_port(decode_component, 320);
 
-  print_state(ilclient_get_handle(component));
+  print_state(ilclient_get_handle(decode_component));
 
 
   // Set up resize component...
   COMPONENT_T *resize_component;
-  err = ilclient_create_component(handle, &resize_component, "resize",
-      ILCLIENT_DISABLE_ALL_PORTS | ILCLIENT_ENABLE_OUTPUT_BUFFERS | ILCLIENT_ENABLE_INPUT_BUFFERS);
-
-  if (err < 0) {
-    fprintf(stderr, "Failed to resize initialise component %d\n", err);
-    exit(EXIT_FAILURE);
-  }
-
-  print_state(ilclient_get_handle(resize_component));
-
-  // Set resize component to idle.
-  if ((err = ilclient_change_component_state(resize_component, OMX_StateIdle)) < 0) {
-    fprintf(stderr, "Failed to change resize component state to idle...\n");
-    exit(EXIT_FAILURE);
-  }
-
-  print_state(ilclient_get_handle(resize_component));
+  create_and_init_component(handle, &resize_component, "resize");
 
   // Set up resize parameters.
   set_resize_component_params(resize_component);
@@ -265,16 +235,17 @@ int main(int argc, char *argv[]) {
 
   // Move image_decode component to executing state.
 
-  if ((err = ilclient_change_component_state(component, OMX_StateExecuting)) < 0) {
+  int err;
+  if ((err = ilclient_change_component_state(decode_component, OMX_StateExecuting)) < 0) {
     fprintf(stderr, "Failed to transition to executing state!\n");
     exit(EXIT_FAILURE);
   }
 
-  print_state(ilclient_get_handle(component));
+  print_state(ilclient_get_handle(decode_component));
 
   // Read the first block so that the component can get the dimensions of the
   // image and call port settings changed on the output port to configure it.
-  OMX_BUFFERHEADERTYPE *buff_header = ilclient_get_input_buffer(component, 320, 1);
+  OMX_BUFFERHEADERTYPE *buff_header = ilclient_get_input_buffer(decode_component, 320, 1);
 
   if (buff_header == NULL) {
     fprintf(stderr, "Failed to allocate a buffer :-(\n");
@@ -292,7 +263,7 @@ int main(int argc, char *argv[]) {
   fseek(f, 0, SEEK_SET);
   printf("File size = %d bytes\n", toread);
 
-  read_into_buffer_and_empty(f, component, buff_header, &toread);
+  read_into_buffer_and_empty(f, decode_component, buff_header, &toread);
 
   // If all the file has been read in, then we have to re-read the first block -- Broadcom bug?
   if (toread <= 0) {
@@ -301,18 +272,18 @@ int main(int argc, char *argv[]) {
   }
 
   // Wait for the first input block to set params for output port.
-  ilclient_wait_for_event(component, OMX_EventPortSettingsChanged, 321, 0, 0, 1,
+  ilclient_wait_for_event(decode_component, OMX_EventPortSettingsChanged, 321, 0, 0, 1,
       ILCLIENT_EVENT_ERROR | ILCLIENT_PARAMETER_CHANGED, 10000);
 
-  get_output_port_settings(component);
+  get_output_port_settings(decode_component);
 
   // Set A back to idel and disable it's output port.
-  ilclient_change_component_state(component, OMX_StateIdle);
-  ilclient_disable_port(component, 321);
+  ilclient_change_component_state(decode_component, OMX_StateIdle);
+  ilclient_disable_port(decode_component, 321);
 
   // Set up the tunnel between the ports of components A and B.
   TUNNEL_T tunnel;
-  set_tunnel(&tunnel, component, 321, resize_component, 60);
+  set_tunnel(&tunnel, decode_component, 321, resize_component, 60);
   if ((err = ilclient_setup_tunnel(&tunnel, 0, 0)) < 0) {
     fprintf(stderr, "Failed to setup tunnel\n");
     exit(EXIT_FAILURE);
@@ -321,9 +292,9 @@ int main(int argc, char *argv[]) {
   }
 
   // Enable decode output ports
-  ilclient_enable_port(component, 321);
+  ilclient_enable_port(decode_component, 321);
 
-  print_state(ilclient_get_handle(component));
+  print_state(ilclient_get_handle(decode_component));
 
   // Enable resize component input ports
   ilclient_enable_port(resize_component, 60);
@@ -332,11 +303,11 @@ int main(int argc, char *argv[]) {
 
   // Set states to executing...
   printf("Setting image_decode to executing...\n");
-  if ((err = ilclient_change_component_state(component, OMX_StateExecuting)) < 0) {
+  if ((err = ilclient_change_component_state(decode_component, OMX_StateExecuting)) < 0) {
     fprintf(stderr, "Couldn't set image_decode to executing: 0x%X\n", err);
     exit(EXIT_FAILURE);
   }
-  print_state(ilclient_get_handle(component));
+  print_state(ilclient_get_handle(decode_component));
 
   printf("Setting resize to executing...\n");
   if ((err = ilclient_change_component_state(resize_component, OMX_StateExecuting)) < 0) {
@@ -349,9 +320,9 @@ int main(int argc, char *argv[]) {
   // Write data to image_decode and read from resize...
 
   while (toread > 0) {
-    buff_header = ilclient_get_input_buffer(component, 320, 1);
+    buff_header = ilclient_get_input_buffer(decode_component, 320, 1);
     if (buff_header != NULL) {
-      read_into_buffer_and_empty(f, component, buff_header, &toread);
+      read_into_buffer_and_empty(f, decode_component, buff_header, &toread);
     }
 
     buff_header = ilclient_get_output_buffer(resize_component, 61, 0);
@@ -373,15 +344,5 @@ int main(int argc, char *argv[]) {
   fclose(f);
   printf("Closing file...\n");
 
-  exit(0);
-
-
-
-
-
-
-
-
   exit(EXIT_SUCCESS);
-
 }
