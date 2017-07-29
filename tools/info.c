@@ -5,7 +5,8 @@
 
 #include <bcm_host.h>
 
-#include <ilclient.h>
+#include "component.h"
+
 
 void error_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data) {
   fprintf(stderr, "OMX error 0x%X\n", (unsigned int)data);
@@ -15,76 +16,17 @@ void eos_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data) {
   fprintf(stderr, "Got EOS event 0x%X\n", (unsigned int)data);
 }
 
-void print_state(OMX_HANDLETYPE *handle) {
-  OMX_STATETYPE state;
-  OMX_ERRORTYPE err = OMX_GetState(handle, &state);
-  if (err != OMX_ErrorNone) {
-    fprintf(stderr, "Error getting state\n");
-    exit(EXIT_FAILURE);
-  }
-
-  switch (state) {
-  case OMX_StateLoaded:
-    printf("StateLoaded\n");
-    break;
-  case OMX_StateIdle:
-    printf("StateIdle\n");
-    break;
-  case OMX_StateExecuting:
-    printf("StateExecuting\n");
-    break;
-  case OMX_StatePause:
-    printf("StatePause\n");
-    break;
-  case OMX_StateWaitForResources:
-    printf("StateWaitForResources\n");
-    break;
-  case OMX_StateInvalid:
-    printf("StateInvalid\n");
-    break;
-  default:
-    printf("State unknown\n");
-    break;
-  }
-}
-
-void set_image_decoder_input_format(COMPONENT_T *component) {
-  printf("Setting image decoder format\n");
-
-  OMX_IMAGE_PARAM_PORTFORMATTYPE image_port_format;
-  memset(&image_port_format, 0, sizeof(OMX_IMAGE_PARAM_PORTFORMATTYPE));
-  image_port_format.nSize = sizeof(OMX_IMAGE_PARAM_PORTFORMATTYPE);
-  image_port_format.nVersion.nVersion =  OMX_VERSION;
-
-  image_port_format.nPortIndex = 320;
-  image_port_format.eCompressionFormat = OMX_IMAGE_CodingJPEG;
-
-  OMX_SetParameter(ilclient_get_handle(component), OMX_IndexParamImagePortFormat, &image_port_format);
-}
-
-void set_image_encoder_output_format(COMPONENT_T *component) {
-  OMX_IMAGE_PARAM_PORTFORMATTYPE image_port_format;
-  memset(&image_port_format, 0, sizeof(OMX_IMAGE_PARAM_PORTFORMATTYPE));
-  image_port_format.nSize = sizeof(OMX_IMAGE_PARAM_PORTFORMATTYPE);
-  image_port_format.nVersion.nVersion =  OMX_VERSION;
-
-  image_port_format.nPortIndex = 341;
-  image_port_format.eCompressionFormat = OMX_IMAGE_CodingJPEG;
-
-  OMX_SetParameter(ilclient_get_handle(component), OMX_IndexParamImagePortFormat, &image_port_format);
-}
-
 OMX_ERRORTYPE read_into_buffer_and_empty(FILE *f, COMPONENT_T *component,
-    OMX_BUFFERHEADERTYPE *buff_header, int *toread) {
+    OMX_BUFFERHEADERTYPE *buff_header, int *bytes_to_read) {
 
   int buff_size = buff_header->nAllocLen;
   int nread = fread(buff_header->pBuffer, 1, buff_size, f);
+  *bytes_to_read -= nread;
 
   printf("Read %d bytes\n", nread);
 
   buff_header->nFilledLen = nread;
-  *toread -= nread;
-  if (*toread <= 0) {
+  if (*bytes_to_read <= 0) {
     printf("Setting EOS on input\n");
     buff_header->nFlags |= OMX_BUFFERFLAG_EOS;
   }
@@ -120,8 +62,6 @@ OMX_ERRORTYPE save_info_from_filled_buffer(COMPONENT_T *component,
     exit(EXIT_SUCCESS);
   }
 
-  // TODO: something with the data.
-
   OMX_ERRORTYPE err = OMX_FillThisBuffer(ilclient_get_handle(component), buff_header);
   if (err != OMX_ErrorNone) {
     fprintf(stderr, "Fill buffer error 0x%X\n", (unsigned int)err);
@@ -130,77 +70,9 @@ OMX_ERRORTYPE save_info_from_filled_buffer(COMPONENT_T *component,
   return err;
 }
 
-void get_output_port_settings(COMPONENT_T *component) {
-
-  printf("Port settings changed!\n");
-
-  // Need to setup the input for the resizer with the output of the decoder.
-  OMX_PARAM_PORTDEFINITIONTYPE portdef;
-  memset(&portdef, 0, sizeof(OMX_PARAM_PORTDEFINITIONTYPE));
-  portdef.nSize = sizeof(OMX_PARAM_PORTDEFINITIONTYPE);
-  portdef.nVersion.nVersion = OMX_VERSION;
-  portdef.nPortIndex = 321;
-
-  OMX_GetParameter(ilclient_get_handle(component), OMX_IndexParamPortDefinition, &portdef);
-
-  unsigned int width = (unsigned int)portdef.format.image.nFrameWidth;
-  unsigned int height = (unsigned int)portdef.format.image.nFrameHeight;
-  unsigned int stride = (unsigned int)portdef.format.image.nStride;
-  unsigned int slice_height = (unsigned int)portdef.format.image.nSliceHeight;
-
-  printf("Width: %d\nHeight: %d\nStride: %d\nSlice height: %d\n", width, height, stride, slice_height);
-
-  printf("Format compression: 0x%X\nColor format: 0x%X\n",
-      (unsigned int) portdef.format.image.eCompressionFormat,
-      (unsigned int) portdef.format.image.eColorFormat);
-}
-
-void set_resize_component_params(COMPONENT_T *component) {
-  OMX_PARAM_PORTDEFINITIONTYPE portdef;
-  memset(&portdef, 0, sizeof(OMX_PARAM_PORTDEFINITIONTYPE));
-  portdef.nSize = sizeof(OMX_PARAM_PORTDEFINITIONTYPE);
-  portdef.nVersion.nVersion = OMX_VERSION;
-  portdef.nPortIndex = 61;
-  OMX_GetParameter(ilclient_get_handle(component), OMX_IndexParamPortDefinition, &portdef);
-  portdef.format.image.nFrameWidth = 1080;
-  portdef.format.image.nFrameHeight = 810;
-  portdef.format.image.nStride = 1088;
-  portdef.format.image.nSliceHeight = 0;
-  portdef.format.image.eColorFormat = OMX_COLOR_FormatYUV420PackedPlanar;
-
-  OMX_ERRORTYPE err;
-  if ((err = OMX_SetParameter(ilclient_get_handle(component),
-        OMX_IndexParamPortDefinition, &portdef)) != OMX_ErrorNone) {
-    fprintf(stderr, "Error setting resize parameters: 0x%X\n", err);
-    exit(EXIT_FAILURE);
-  }
-}
-
-void create_and_init_component(ILCLIENT_T *handle,
-    COMPONENT_T **component, char *component_name) {
-  int err = ilclient_create_component(handle, component, component_name,
-      ILCLIENT_DISABLE_ALL_PORTS | ILCLIENT_ENABLE_INPUT_BUFFERS | ILCLIENT_ENABLE_OUTPUT_BUFFERS);
-
-  if (err < 0) {
-    fprintf(stderr, "Failed to initialise component %s, error code 0x%X\n",
-        component_name, err);
-    exit(EXIT_FAILURE);
-  }
-
-  print_state(ilclient_get_handle(*component));
-
-  // Move component to idle state.
-  if ((err = ilclient_change_component_state(*component, OMX_StateIdle)) < 0) {
-    fprintf(stderr, "Failed to change component state to idle!\n");
-    exit(EXIT_FAILURE);
-  }
-
-  print_state(ilclient_get_handle(*component));
-}
 
 int main(int argc, char *argv[]) {
   ILCLIENT_T *handle = 0;
-  COMPONENT_T *decode_component;
 
   bcm_host_init();
 
@@ -209,9 +81,7 @@ int main(int argc, char *argv[]) {
   if (!handle) {
     fprintf(stderr, "Failed to initialise ilclient\n");
     exit(EXIT_FAILURE);
-  } else {
-    printf("handle = 0x%X\n", (unsigned int)handle);
-  }
+  } 
 
   if (OMX_Init() != OMX_ErrorNone) {
     fprintf(stderr, "Failed to initialise OMX\n");
@@ -221,60 +91,30 @@ int main(int argc, char *argv[]) {
   ilclient_set_error_callback(handle, error_callback, NULL);
   ilclient_set_eos_callback(handle, eos_callback, NULL);
 
-  // Create image_decode component in loaded state with all ports disabled.
-  create_and_init_component(handle, &decode_component, "image_decode");
+  // ***************************************************
+  // ********** Initialise component pipeline **********
+  // ***************************************************
 
-  set_image_decoder_input_format(decode_component);
-
-  // Create input port buffer and enable port.
-  ilclient_enable_port_buffers(decode_component, 320, NULL, NULL, NULL);
-  ilclient_enable_port(decode_component, 320);
-
-  print_state(ilclient_get_handle(decode_component));
-
+  // Create image_decode component.
+  OMX_HELPER_COMPONENT decode_component;
+  create_and_initialise_image_decode_component(handle, &decode_component);
+  set_component_input_image_format(&decode_component, OMX_IMAGE_CodingJPEG);
 
   // Set up resize component...
-  COMPONENT_T *resize_component;
-  create_and_init_component(handle, &resize_component, "resize");
-
-  // Set up resize parameters.
-  set_resize_component_params(resize_component);
-
-  // Enable output port of resize component
-  /*ilclient_enable_port_buffers(resize_component, 61, NULL, NULL, NULL);
-  ilclient_enable_port(resize_component, 61);*/
-
-  print_state(ilclient_get_handle(resize_component));
-
+  OMX_HELPER_COMPONENT resize_component;
+  create_and_initialise_resize_component(handle, &resize_component);
+  set_resize_params(&resize_component, 1024, 768);
 
   // Set up encode component...
-  COMPONENT_T *encode_component;
-  create_and_init_component(handle, &encode_component, "image_encode");
-  set_image_encoder_output_format(encode_component);
+  OMX_HELPER_COMPONENT encode_component;
+  create_and_initialise_image_encode_component(handle, &encode_component);
+  set_component_output_image_format(&encode_component, OMX_IMAGE_CodingJPEG);
 
-  // Enable output port on encode component.
-  ilclient_enable_port_buffers(encode_component, 341, NULL, NULL, NULL);
-  ilclient_enable_port(encode_component, 341);
+  // Create and initialise pipeline.
+  connect_components(&decode_component, &resize_component);
+  connect_components(&resize_component, &encode_component);
 
-
-
-  // Move image_decode component to executing state.
-  int err;
-  if ((err = ilclient_change_component_state(decode_component, OMX_StateExecuting)) < 0) {
-    fprintf(stderr, "Failed to transition to executing state!\n");
-    exit(EXIT_FAILURE);
-  }
-
-  print_state(ilclient_get_handle(decode_component));
-
-  // Read the first block so that the component can get the dimensions of the
-  // image and call port settings changed on the output port to configure it.
-  OMX_BUFFERHEADERTYPE *buff_header = ilclient_get_input_buffer(decode_component, 320, 1);
-
-  if (buff_header == NULL) {
-    fprintf(stderr, "Failed to allocate a buffer :-(\n");
-    exit(EXIT_FAILURE);
-  }
+  initialise_pipeline(&decode_component);
 
   FILE *f = fopen("/mnt/data/timelapse/current.jpg", "rb");
   if (!f) {
@@ -283,102 +123,38 @@ int main(int argc, char *argv[]) {
   }
 
   fseek(f, 0, SEEK_END);
-  int toread = ftell(f);
+  int bytes_to_read = ftell(f);
   fseek(f, 0, SEEK_SET);
-  printf("File size = %d bytes\n", toread);
 
-  read_into_buffer_and_empty(f, decode_component, buff_header, &toread);
+  prime_component_with_stream(&decode_component, f);
+  bytes_to_read -= ftell(f);
 
-  // If all the file has been read in, then we have to re-read the first block -- Broadcom bug?
-  if (toread <= 0) {
-    printf("Rewinding...\n");
-    fseek(f, 0, SEEK_SET);
-  }
-
-
-  // Wait for the first input block to set params for output port.
-  ilclient_wait_for_event(decode_component, OMX_EventPortSettingsChanged, 321, 0, 0, 1,
-      ILCLIENT_EVENT_ERROR | ILCLIENT_PARAMETER_CHANGED, 10000);
-
-  get_output_port_settings(decode_component);
-
-  // Set up the tunnel between the ports of image_decode and resize components.
-  TUNNEL_T decode_resize_tunnel;
-  set_tunnel(&decode_resize_tunnel, decode_component, 321, resize_component, 60);
-  if ((err = ilclient_setup_tunnel(&decode_resize_tunnel, 0, 0)) < 0) {
-    fprintf(stderr, "Failed to setup decode_resize_tunnel\n");
-    exit(EXIT_FAILURE);
-  } else {
-    printf("decode_resize_tunnel has been set up!\n");
-  }
-
-  TUNNEL_T resize_encode_tunnel;
-  set_tunnel(&resize_encode_tunnel, resize_component, 61, encode_component, 340);
-  if ((err = ilclient_setup_tunnel(&resize_encode_tunnel, 0, 0)) < 0) {
-    fprintf(stderr, "Failed to setup resize_encode_tunnel\n");
-    exit(EXIT_FAILURE);
-  } else {
-    printf("resize_encode_tunnel has been set up!\n");
-  }
-
-  // Enable decode output ports
-  ilclient_enable_port(decode_component, 321);
-  print_state(ilclient_get_handle(decode_component));
-
-  // Enable resize component input and output ports
-  ilclient_enable_port(resize_component, 60);
-  ilclient_enable_port(resize_component, 61);
-
-  // Enable encode component input port
-  ilclient_enable_port(encode_component, 340);
-
-
-  print_state(ilclient_get_handle(resize_component));
-
-  // Set states to executing...
-  printf("Setting image_decode to executing...\n");
-  if ((err = ilclient_change_component_state(decode_component, OMX_StateExecuting)) < 0) {
-    fprintf(stderr, "Couldn't set image_decode to executing: 0x%X\n", err);
-    exit(EXIT_FAILURE);
-  }
-  print_state(ilclient_get_handle(decode_component));
-
-  printf("Setting resize to executing...\n");
-  if ((err = ilclient_change_component_state(resize_component, OMX_StateExecuting)) < 0) {
-    fprintf(stderr, "Couldn't set resize to executing: 0x%X\n", err);
-    exit(EXIT_FAILURE);
-  }
-  print_state(ilclient_get_handle(resize_component));
-
-  printf("Setting image_encode to executing...\n");
-  if ((err = ilclient_change_component_state(encode_component, OMX_StateExecuting)) < 0) {
-    fprintf(stderr, "Couldn't set resize to executing: 0x%X\n", err);
-    exit(EXIT_FAILURE);
-  }
-  print_state(ilclient_get_handle(encode_component));
+  start_pipeline(&decode_component);
 
 
   // Clear output file.
   fclose(fopen("output.jpg", "wb"));
 
+
   // Write data to image_decode and read from image_decode...
-  while (toread > 0) {
-    buff_header = ilclient_get_input_buffer(decode_component, 320, 1);
+  OMX_BUFFERHEADERTYPE *buff_header;
+  while (bytes_to_read) {
+    buff_header = ilclient_get_input_buffer(decode_component.component, 320, 1);
     if (buff_header != NULL) {
-      read_into_buffer_and_empty(f, decode_component, buff_header, &toread);
+      read_into_buffer_and_empty(f, decode_component.component, buff_header, &bytes_to_read);
     }
 
-    buff_header = ilclient_get_output_buffer(encode_component, 341, 0);
+    buff_header = ilclient_get_output_buffer(encode_component.component, 341, 0);
     if (buff_header != NULL) {
-      save_info_from_filled_buffer(encode_component, buff_header);
+      save_info_from_filled_buffer(encode_component.component, buff_header);
     }
   }
 
   while (1) {
     printf("Getting the last output buffers...\n");
-    buff_header = ilclient_get_output_buffer(encode_component, 341, 1);
+    buff_header = ilclient_get_output_buffer(encode_component.component, 341, 1);
     if (buff_header != NULL) {
-      save_info_from_filled_buffer(encode_component, buff_header);
+      save_info_from_filled_buffer(encode_component.component, buff_header);
     } else {
       break;
     }
