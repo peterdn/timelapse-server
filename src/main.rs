@@ -3,13 +3,11 @@ use std::io::Write;
 use std::net::Shutdown;
 use std::net::TcpListener;
 use std::net::TcpStream;
+use std::process::Command;
 use std::thread;
 
 extern crate redis;
 use redis::Commands;
-
-extern crate image;
-use image::GenericImage;
 
 fn handle_request(mut stream: TcpStream) {
     // GET will be in first line of header.
@@ -101,15 +99,9 @@ fn current_image(stream: &mut TcpStream) {
     } else {
         println!("Loading image from file...");
 
-        let mut image = image::open(image_filepath).expect("Unable to open image file!");
-        let (width, height) = image.dimensions();
-
-        let (new_width, new_height) = (width/3, height/3);
-        println!("Resizing image from {}x{} to {}x{}...", width, height, new_width, new_height);
-        image = image.resize(new_width, new_height, image::FilterType::Triangle);
-
-        image_buffer = Vec::new();
-        image.save(&mut image_buffer, image::JPEG).expect("Failed to encode image to buffer!");
+        let output = Command::new("./omx_resize_image").args(&[image_filepath]).output()
+                .expect("Failed to execute omx_resize_image");
+        image_buffer = output.stdout;
 
         // TODO: pointlessly have to clone the image here?
         conn.set::<&str, Vec<u8>, ()>(image_filepath, image_buffer.clone()).expect("Failed to cache image in Redis!");
