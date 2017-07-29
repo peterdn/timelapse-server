@@ -277,9 +277,6 @@ int main(int argc, char *argv[]) {
 
   get_output_port_settings(decode_component);
 
-  // Set A back to idel and disable it's output port.
-  ilclient_change_component_state(decode_component, OMX_StateIdle);
-  ilclient_disable_port(decode_component, 321);
 
   // Set up the tunnel between the ports of components A and B.
   TUNNEL_T tunnel;
