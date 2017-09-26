@@ -9,10 +9,17 @@ use std::thread;
 extern crate redis;
 use redis::Commands;
 
+extern crate time;
+
+fn time_str() -> String {
+    time::strftime("%Y-%m-%d %H:%M:%S", &time::now()).expect("")
+}
+
 fn handle_request(mut stream: TcpStream) {
     // GET will be in first line of header.
     let mut get_line = String::new();
 
+    println!("[{}] Reading request", time_str());
     {
         let mut reader = BufReader::new(&stream);
         reader.read_line(&mut get_line)
@@ -32,20 +39,23 @@ fn handle_request(mut stream: TcpStream) {
             line.clear();
         }
     }
+    println!("[{}] Finished reading request", time_str());
 
     let get_line = get_line.trim();
 
     if get_line == "GET /timelapse HTTP/1.1" {
-        println!("Getting timelapse!");
+        println!("[{}] Getting timelapse!", time_str());
         main_page(&mut stream);
     } else if get_line == "GET /current.jpg HTTP/1.1" {
-        println!("Getting image!");
+        println!("[{}] Getting image!", time_str());
         current_image(&mut stream);
     } else {
         not_found(&mut stream);
     }
 
+    println!("[{}] Finished servicing request, closing stream", time_str());
     stream.shutdown(Shutdown::Write).expect("Could not shut down!");
+    println!("[{}] Stream closed", time_str());
 }
 
 fn main() {
