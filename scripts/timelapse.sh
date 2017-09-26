@@ -9,7 +9,7 @@ THUMB_FILE="$DATA_DIR/$TIMESTAMP-thumb.jpg"
 CURRENT_FRAME="$DATA_DIR/current.jpg"
 CURRENT_THUMB="$DATA_DIR/current-thumb.jpg"
 
-LD_LIBRARY_PATH=/opt/vc/lib /opt/vc/bin/raspistill -w 2160 -h 1620 -th 128:96:70 -n -ex auto -awb auto -o "$IMAGE_FILE"
+LD_LIBRARY_PATH=/opt/vc/lib /opt/vc/bin/raspistill -th 128:96:70 -n -ex auto -awb auto -o "$IMAGE_FILE"
 
 exiv2 -et "$IMAGE_FILE"
 
