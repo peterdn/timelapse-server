@@ -11,6 +11,11 @@
 // 5MB output buffer.
 #define OUTPUT_BUFFER_SIZE (1024*1024*5)
 
+// Size of raw bayer block appended to end of jpeg image.
+#define RAW_BLOCK_SIZE 6404096
+
+#define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
+
 
 void error_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data) {
   fprintf(stderr, "OMX error 0x%X\n", (unsigned int)data);
@@ -24,8 +29,13 @@ OMX_ERRORTYPE read_into_buffer_and_empty(FILE *f, COMPONENT_T *component,
     OMX_BUFFERHEADERTYPE *buff_header, int *bytes_to_read) {
 
   int buff_size = buff_header->nAllocLen;
-  int nread = fread(buff_header->pBuffer, 1, buff_size, f);
+  int nread = fread(buff_header->pBuffer, 1, MIN(buff_size, *bytes_to_read), f);
   *bytes_to_read -= nread;
+
+  if (*bytes_to_read < 0) {
+    fprintf(stderr, "BAD bytes_to_read: can't be negative\n");
+    exit(EXIT_FAILURE);
+  }
 
   fprintf(stderr, "Read %d bytes\n", nread);
 
@@ -135,6 +145,11 @@ int main(int argc, char *argv[]) {
   fseek(f, 0, SEEK_END);
   int bytes_to_read = ftell(f);
   fseek(f, 0, SEEK_SET);
+
+  // If the file is appended with raw bayer data, truncate:
+  if (bytes_to_read > RAW_BLOCK_SIZE) {
+    bytes_to_read -= RAW_BLOCK_SIZE;
+  }
 
   prime_component_with_stream(&decode_component, f);
   bytes_to_read -= ftell(f);
