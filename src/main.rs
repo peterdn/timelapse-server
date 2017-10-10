@@ -31,8 +31,11 @@ fn handle_request(mut stream: TcpStream) {
         // transfer closed with X bytes remaining to read.
         let mut line = String::new();
         loop {
-            reader.read_line(&mut line)
-                    .expect("Failed to read line from stream");
+            if reader.read_line(&mut line)
+                    .expect("Failed to read line from stream") == 0 {
+                println!("[{}] Request EOF -- terminating thread.", time_str());
+                return;
+            };
             if line == "\r\n" {
                 break;
             }
