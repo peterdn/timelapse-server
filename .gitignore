@@ -1,2 +1,6 @@
 target/
 **/*.rs.bk
+*.jpg
+*.mp4
+*.gif
+.vscode/
