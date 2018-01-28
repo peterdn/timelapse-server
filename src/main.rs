@@ -116,8 +116,7 @@ fn current_image(stream: &mut TcpStream) {
                 .expect("Failed to execute omx_resize_image");
         image_buffer = output.stdout;
 
-        // TODO: pointlessly have to clone the image here?
-        conn.set::<&str, Vec<u8>, ()>(image_filepath, image_buffer.clone()).expect("Failed to cache image in Redis!");
+        conn.set::<&str, &[u8], ()>(image_filepath, &image_buffer).expect("Failed to cache image in Redis!");
     }
 
     println!("Image {} is size {}", image_filepath, image_buffer.len());
